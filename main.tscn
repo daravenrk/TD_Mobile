@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://dh2m0t6cf3jov"]
+
+[ext_resource type="Script" uid="uid://822n3g83y2se" path="res://scripts/main.gd" id="1_main"]
+
+[node name="Deepwatch" type="Node2D" unique_id=1897601905]
+script = ExtResource("1_main")
