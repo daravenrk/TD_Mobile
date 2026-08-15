@@ -70,6 +70,30 @@ emergency_repair={
 "deadzone": 0.5,
 "events": [Object(InputEventKey,"physical_keycode":70)]
 }
+interact={
+"deadzone": 0.5,
+"events": [Object(InputEventKey,"physical_keycode":69)]
+}
+deploy_barricade={
+"deadzone": 0.5,
+"events": [Object(InputEventKey,"physical_keycode":66)]
+}
+tower_1={
+"deadzone": 0.5,
+"events": [Object(InputEventKey,"physical_keycode":49)]
+}
+tower_2={
+"deadzone": 0.5,
+"events": [Object(InputEventKey,"physical_keycode":50)]
+}
+tower_3={
+"deadzone": 0.5,
+"events": [Object(InputEventKey,"physical_keycode":51)]
+}
+tower_4={
+"deadzone": 0.5,
+"events": [Object(InputEventKey,"physical_keycode":52)]
+}
 
 [rendering]
 
