@@ -1,6 +1,18 @@
 .godot/
 *.md
-builds/
+[Bb]uilds/
+.DS_Store
+
+# Godot Web exports accidentally written to the project root.
+/index.html
+/index.js
+/index.wasm
+/index.pck
+/index*.png
+/index*.png.import
+/index.audio*.js
+
+# Release signing credentials must remain local.
 *.keystore
 *.jks
 *.p12
