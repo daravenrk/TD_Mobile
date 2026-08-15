@@ -9,6 +9,7 @@ const LockdownDirectorScript = preload("res://scripts/lockdown_director.gd")
 const DefenseLoadoutScript = preload("res://scripts/defense_loadout.gd")
 const EngineerToolkitScript = preload("res://scripts/engineer_toolkit.gd")
 const EnemyBehaviorScript = preload("res://scripts/enemy_behavior.gd")
+const CampaignProgressionScript = preload("res://scripts/campaign_progression.gd")
 
 const GRID_SIZE := Vector2i(30, 22)
 const TILE_W := 64.0
@@ -44,6 +45,7 @@ var power_network = PowerNetworkScript.new()
 var lockdown_director = LockdownDirectorScript.new()
 var defense_loadout = DefenseLoadoutScript.new()
 var engineer_toolkit = EngineerToolkitScript.new()
+var campaign = CampaignProgressionScript.new()
 var map_data: Dictionary = {}
 
 var credits := 190.0
@@ -98,11 +100,23 @@ var directive_buttons: Array[Button] = []
 
 
 func _ready() -> void:
-	_generate_map()
+	campaign.load_progress()
+	_prepare_campaign_level()
 	_build_hud()
 	get_viewport().size_changed.connect(_on_viewport_resized)
 	_on_viewport_resized()
 	queue_redraw()
+
+
+func _prepare_campaign_level() -> void:
+	var level: Dictionary = campaign.get_current_level()
+	credits = float(level.starting_credits)
+	base_health = int(level.starting_integrity)
+	total_kills = 0
+	campaign.begin_run()
+	_generate_map(int(level.map_seed))
+	if title_label != null:
+		_apply_responsive_layout()
 
 
 func _generate_map(forced_seed: int = -1) -> void:
@@ -152,7 +166,7 @@ func _generate_map(forced_seed: int = -1) -> void:
 	tap_route.clear()
 	lockdown_director = LockdownDirectorScript.new(map_seed)
 	engineer_toolkit.reset()
-	exploration.reset(GRID_SIZE, 4)
+	exploration.reset(GRID_SIZE, int(campaign.get_current_level().vision_radius))
 	exploration.update_from_grid_position(player_pos, true)
 
 
@@ -287,7 +301,7 @@ func _build_hud() -> void:
 	layer.add_child(top_bar)
 
 	title_label = Label.new()
-	title_label.text = "DEEPWATCH  //  SECTOR K-12"
+	title_label.text = "DEEPWATCH  //  L%d %s" % [campaign.current_level_index + 1, campaign.get_current_level().name]
 	title_label.position = Vector2(22, 12)
 	title_label.add_theme_font_size_override("font_size", 20)
 	title_label.add_theme_color_override("font_color", CREAM)
@@ -439,9 +453,10 @@ func _panel_style(color: Color, border: Color, width: int) -> StyleBoxFlat:
 
 
 func _show_briefing() -> void:
+	var level: Dictionary = campaign.get_current_level()
 	overlay.visible = true
-	overlay_title.text = "DEEPWATCH"
-	overlay_body.text = "The blacksite is dark and its lockdown grid is offline. Explore connected rooms, restore three strategic facilities, and defend each system while it synchronizes.\n\nPower brings sensors and armory bonuses online. Hold E at the highlighted facility. Secure all sectors, then survive the final breach."
+	overlay_title.text = "LEVEL %d  //  %s" % [campaign.current_level_index + 1, level.name]
+	overlay_body.text = "%s\n\nThe blacksite grid is offline. Explore connected rooms, restore three strategic facilities, and defend each system while it synchronizes.\n\nHigh score: %d" % [level.subtitle, campaign.get_high_score()]
 	overlay_button.text = "ENTER THE BASE"
 
 
@@ -450,7 +465,13 @@ func _overlay_action() -> void:
 		game_state = "playing"
 		overlay.visible = false
 		_flash_message("Sector link established")
-	elif game_state == "victory" or game_state == "defeat":
+	elif game_state == "victory":
+		campaign.advance_level()
+		_prepare_campaign_level()
+		game_state = "playing"
+		overlay.visible = false
+		_flash_message("Entering level %d: %s" % [campaign.current_level_index + 1, campaign.get_current_level().name])
+	elif game_state == "defeat":
 		_reset_game()
 
 
@@ -489,20 +510,10 @@ func _choose_directive(directive_id: String) -> void:
 
 
 func _reset_game() -> void:
-	credits = 190.0
-	base_health = 20
-	wave = 0
-	total_kills = 0
-	wave_active = false
-	enemies.clear()
-	tracers.clear()
-	particles.clear()
-	shock_waves.clear()
-	abilities.reset()
-	_generate_map()
+	_prepare_campaign_level()
 	game_state = "playing"
 	overlay.visible = false
-	_flash_message("Defense grid reset")
+	_flash_message("Level restarted")
 
 
 func _on_viewport_resized() -> void:
@@ -585,7 +596,7 @@ func _apply_compact_layout(safe_rect: Rect2) -> void:
 	var header_height := 104.0 if portrait else 78.0
 	top_bar.position = safe_rect.position + Vector2(margin, margin)
 	top_bar.size = Vector2(width - margin * 2.0, header_height)
-	title_label.text = "DEEPWATCH"
+	title_label.text = "DEEPWATCH  L%d" % (campaign.current_level_index + 1)
 	title_label.position = Vector2(12, 7)
 	title_label.size = Vector2(top_bar.size.x * 0.43, 24)
 	title_label.add_theme_font_size_override("font_size", 16)
@@ -702,6 +713,7 @@ func _physics_process(delta: float) -> void:
 		queue_redraw()
 		return
 
+	campaign.update(delta)
 	_update_player(delta)
 	var camera_weight := 1.0 - exp(-5.5 * delta)
 	camera_pos = camera_pos.lerp(player_pos, camera_weight)
@@ -747,9 +759,10 @@ func _update_lockdown(delta: float) -> void:
 		return
 	if lockdown_director.active_objective_index < 0:
 		lockdown_director.activate_next_objective()
-	var objective_rate := 34.0 * delta
+	var objective_rate := 34.0 * float(campaign.get_current_level().repair_multiplier) * delta
 	var repair_result: Dictionary = lockdown_director.add_objective_repair(objective_rate)
 	if repair_result.get("completed", false):
+		campaign.award_objective()
 		power_network.repair_facility(facility_id, 1000.0)
 		lockdown_director.begin_incursion()
 		_spawn_burst(Vector2(facility.position), CYAN, 18)
@@ -764,7 +777,7 @@ func _repair_nearby_facility(delta: float) -> void:
 		if player_pos.distance_to(Vector2(facility.position)) > 0.72:
 			continue
 		if facility.hp < facility.max_hp:
-			var repair_rate := 34.0 * delta
+			var repair_rate := 34.0 * float(campaign.get_current_level().repair_multiplier) * delta
 			var hp_before := float(facility.hp)
 			power_network.repair_facility(facility_id, repair_rate)
 			if hp_before + repair_rate >= float(facility.max_hp):
@@ -775,14 +788,14 @@ func _repair_nearby_facility(delta: float) -> void:
 func _update_power_capacity() -> void:
 	# Restoring the grid relay connects the generator's reserve bus. Losing the
 	# relay drops capacity again, but the engineer can now repair it in combat.
-	power_network.capacity = 60.0 if power_network.is_online("grid_relay") else 20.0
+	power_network.capacity = float(campaign.get_current_level().reserve_capacity) if power_network.is_online("grid_relay") else 20.0
 
 
 func _update_sensor_range() -> void:
-	var desired_radius := 4
+	var desired_radius := int(campaign.get_current_level().vision_radius)
 	var coverage: Array[Dictionary] = power_network.get_sensor_coverage()
 	if not coverage.is_empty():
-		desired_radius = roundi(7.0 * lockdown_director.get_modifier("sensor_range"))
+		desired_radius = roundi(float(campaign.get_current_level().sensor_radius) * lockdown_director.get_modifier("sensor_range"))
 	if exploration.vision_radius != desired_radius:
 		exploration.set_vision_radius(desired_radius)
 		exploration.update_from_grid_position(player_pos, true)
@@ -841,8 +854,7 @@ func _activate_shock_pulse() -> void:
 	shock_waves.append({"pos": player_pos, "life": 0.55, "max_life": 0.55, "radius": abilities.shock_radius})
 	for defeated_enemy in result.defeated:
 		if defeated_enemy in enemies:
-			credits += defeated_enemy.reward
-			total_kills += 1
+			_award_enemy_defeat(defeated_enemy)
 			_spawn_burst(defeated_enemy.pos, CYAN, 9)
 			enemies.erase(defeated_enemy)
 	_flash_message("Shock pulse hit %d hostiles" % result.affected.size())
@@ -1024,9 +1036,10 @@ func _request_wave() -> void:
 
 func _start_directed_incursion(is_final: bool) -> void:
 	var plan: Dictionary = lockdown_director.get_final_breach_plan() if is_final else lockdown_director.get_current_incursion_plan()
+	var level: Dictionary = campaign.get_current_level()
 	wave = int(plan.sector)
-	current_composition = plan.composition.duplicate()
-	current_difficulty = float(plan.difficulty_multiplier)
+	current_composition = campaign.scale_composition(plan.composition)
+	current_difficulty = float(plan.difficulty_multiplier) * float(level.enemy_health)
 	current_incursion_final = is_final
 	wave_active = true
 	spawned_this_wave = 0
@@ -1047,11 +1060,13 @@ func _update_wave(delta: float) -> void:
 			spawn_timer = maxf(0.34, 0.88 - wave * 0.065)
 	elif enemies.is_empty():
 		wave_active = false
-		credits += 35.0 + wave * 8.0
+		credits += (35.0 + wave * 8.0) * float(campaign.get_current_level().reward_multiplier)
 		if current_incursion_final:
+			campaign.award_incursion(true)
 			lockdown_director.complete_final_breach()
 			_end_game(true)
 		else:
+			campaign.award_incursion(false)
 			var completion: Dictionary = lockdown_director.complete_incursion()
 			if lockdown_director.state == lockdown_director.STATE_DIRECTIVE:
 				_show_directive_choices(completion.directive_choices)
@@ -1071,6 +1086,7 @@ func _spawn_enemy(path_index: int) -> void:
 	enemy.display_name = "Grid Sapper" if enemy_type == "sapper" else "Signal Stalker" if enemy_type == "stalker" else enemy.display_name
 	enemy.hp *= current_difficulty
 	enemy.max_hp = enemy.hp
+	enemy.speed *= float(campaign.get_current_level().enemy_speed)
 	enemy.pos = Vector2(paths[path_index][0])
 	enemy.shield_regen_remaining = 0.0
 	enemy.slow_remaining = 0.0
@@ -1233,10 +1249,15 @@ func _resolve_enemy_deaths() -> void:
 		var enemy: Dictionary = enemies[index]
 		if enemy.hp > 0.0:
 			continue
-		credits += enemy.reward * lockdown_director.get_modifier("enemy_reward")
-		total_kills += 1
+		_award_enemy_defeat(enemy)
 		_spawn_burst(enemy.pos, ORANGE, 7)
 		enemies.remove_at(index)
+
+
+func _award_enemy_defeat(enemy: Dictionary) -> void:
+	credits += float(enemy.reward) * lockdown_director.get_modifier("enemy_reward") * float(campaign.get_current_level().reward_multiplier)
+	total_kills += 1
+	campaign.award_kill(str(enemy.type), wave)
 
 
 func _is_pad_powered(target_pad: Dictionary) -> bool:
@@ -1314,15 +1335,17 @@ func _end_game(won: bool) -> void:
 	wave_active = false
 	wave_button.disabled = true
 	overlay.visible = true
+	var run_result: Dictionary = campaign.finish_run(won, base_health, engineer_toolkit.health)
+	var record_line := "NEW HIGH SCORE" if run_result.new_record else "HIGH SCORE  %d" % run_result.high_score
 	if won:
-		overlay_title.text = "SECTOR SECURED"
-		overlay_body.text = "The lockdown protocol is complete and the final breach has been repelled.\n\nHostiles neutralized: %d\nVault integrity: %d / 20\nDirectives active: %d" % [total_kills, base_health, lockdown_director.get_selected_directives().size()]
-		overlay_button.text = "RUN NEW SHIFT"
+		overlay_title.text = "%s SECURED" % str(run_result.level.name)
+		overlay_body.text = "SCORE  %d  //  %s\n\nHostiles neutralized: %d\nVault integrity: %d / 20\nCompletion time: %.1fs" % [run_result.score, record_line, total_kills, base_health, run_result.elapsed_time]
+		overlay_button.text = "NEXT LEVEL" if campaign.has_next_level() else "REPLAY CAMPAIGN"
 	else:
 		lockdown_director.report_defeat("vault_destroyed")
 		overlay_title.text = "VAULT BREACHED"
-		overlay_body.text = "The defense network collapsed before lockdown completed. Restore sensors early and protect the power grid.\n\nHostiles neutralized: %d\nSectors secured: %d / 3" % [total_kills, lockdown_director.incursions_completed]
-		overlay_button.text = "RETRY SHIFT"
+		overlay_body.text = "SCORE  %d  //  %s\n\nHostiles neutralized: %d\nSectors secured: %d / 3\nRepair the grid and adapt the tower mix." % [run_result.score, record_line, total_kills, lockdown_director.incursions_completed]
+		overlay_button.text = "RETRY LEVEL"
 
 
 func _update_hud() -> void:
@@ -1330,10 +1353,11 @@ func _update_hud() -> void:
 	for enemy in enemies:
 		if exploration.is_visible(Vector2i(roundi(enemy.pos.x), roundi(enemy.pos.y))):
 			visible_contacts += 1
+	var campaign_hud: Dictionary = campaign.get_hud_state()
 	if is_compact_layout:
-		resources_label.text = "CR %03d  VAULT %02d/20\nENG %03d  HOSTILES %02d" % [floori(credits), base_health, floori(engineer_toolkit.health), visible_contacts]
+		resources_label.text = "CR %03d  VAULT %02d/20\nSCORE %06d  ENG %03d" % [floori(credits), base_health, campaign_hud.score, floori(engineer_toolkit.health)]
 	else:
-		resources_label.text = "CREDITS %03d    VAULT %02d/20    ENGINEER %03d/100    CONTACTS %02d" % [floori(credits), base_health, floori(engineer_toolkit.health), visible_contacts]
+		resources_label.text = "CREDITS %03d    VAULT %02d/20    ENGINEER %03d/100    SCORE %06d" % [floori(credits), base_health, floori(engineer_toolkit.health), campaign_hud.score]
 	var director_hud: Dictionary = lockdown_director.get_hud_state()
 	wave_label.text = "%d/3  •  %s" % [director_hud.secured_sectors, director_hud.state_label] if is_compact_layout else "LOCKDOWN  %d / 3   •   %s" % [director_hud.secured_sectors, director_hud.state_label]
 	if director_hud.telegraph_active:

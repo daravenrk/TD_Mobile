@@ -26,6 +26,8 @@ Shared release preparation
 - Test 1280x720 and larger desktop windows, 854x480 landscape phones,
   1280x800 tablets, and at least one portrait layout as a fallback.
 - Profile a late incursion with eight MK-3 towers on the lowest target device.
+- Complete all five campaign levels and confirm each per-level high score
+  survives a full application restart.
 
 Godot export presets to create
 ------------------------------
@@ -68,3 +70,5 @@ Release gates
   desktop target is 60 FPS.
 - Pause correctly when mobile is backgrounded or a Web tab loses focus.
 - Keyboard, mouse, touch, and controller smoke passes are recorded per build.
+- Campaign progression, retry, final-level wraparound, and record persistence
+  pass on a clean install and an upgraded save.

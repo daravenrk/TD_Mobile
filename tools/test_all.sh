@@ -15,4 +15,5 @@ SCRIPT_DIR="${0:A:h}"
 "$SCRIPT_DIR/run_headless.sh" --script res://tests/enemy_behavior_test.gd
 "$SCRIPT_DIR/run_headless.sh" --script res://tests/movement_flow_test.gd
 "$SCRIPT_DIR/run_headless.sh" --script res://tests/responsive_layout_test.gd
+"$SCRIPT_DIR/run_headless.sh" --script res://tests/campaign_progression_test.gd
 "$SCRIPT_DIR/test.sh"

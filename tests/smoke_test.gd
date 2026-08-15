@@ -137,6 +137,13 @@ func _run() -> void:
 	_check(game.game_state == "victory", "Completing lockdown did not trigger victory")
 	_check(game.total_kills > 0, "Defenses did not destroy any enemies")
 	_check(game.enemies.is_empty(), "Enemies remained after victory")
+	_check(game.campaign.score > 0, "Completed level did not produce a score")
+	_check("SCORE" in game.overlay_body.text, "Victory screen did not present the final score")
+	_check(game.overlay_button.text == "NEXT LEVEL", "First victory did not offer campaign progression")
+	game._overlay_action()
+	_check(game.campaign.current_level_index == 1, "Victory did not advance to campaign level two")
+	_check(game.map_seed == int(game.campaign.get_current_level().map_seed), "Next level did not load its authored map seed")
+	_check(game.base_health == int(game.campaign.get_current_level().starting_integrity), "Next level did not apply its integrity challenge")
 
 	if failures.is_empty():
 		print("LOCKDOWN SMOKE TEST PASSED: rooms, power, fog, tools, towers, objectives, directives, sappers, and final breach")
