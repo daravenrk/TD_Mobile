@@ -81,10 +81,14 @@ var objective_label: Label
 var prompt_label: Label
 var message_label: Label
 var intel_label: Label
+var top_bar: Panel
 var wave_button: Button
 var shock_button: Button
 var repair_button: Button
 var barricade_button: Button
+var mobile_context_buttons: Array[Button] = []
+var is_compact_layout := false
+var mobile_interact_held := false
 var overlay: ColorRect
 var overlay_card: Panel
 var overlay_title: Label
@@ -276,7 +280,7 @@ func _build_hud() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
 
-	var top_bar := Panel.new()
+	top_bar = Panel.new()
 	top_bar.position = Vector2(20, 18)
 	top_bar.size = Vector2(1240, 70)
 	top_bar.add_theme_stylebox_override("panel", _panel_style(Color("#0d171dcc"), CYAN, 1))
@@ -366,6 +370,16 @@ func _build_hud() -> void:
 	barricade_button.add_theme_font_size_override("font_size", 14)
 	barricade_button.pressed.connect(_deploy_barricade)
 	layer.add_child(barricade_button)
+
+	for index in range(4):
+		var context_button := Button.new()
+		context_button.visible = false
+		context_button.focus_mode = Control.FOCUS_NONE
+		context_button.add_theme_font_size_override("font_size", 13)
+		context_button.button_down.connect(_mobile_context_button_down.bind(index))
+		context_button.button_up.connect(_mobile_context_button_up.bind(index))
+		layer.add_child(context_button)
+		mobile_context_buttons.append(context_button)
 
 	overlay = ColorRect.new()
 	overlay.color = Color("#071015e8")
@@ -459,6 +473,7 @@ func _show_directive_choices(choices: Array) -> void:
 		button.pressed.connect(_choose_directive.bind(str(choice.id)))
 		overlay_card.add_child(button)
 		directive_buttons.append(button)
+	_layout_directive_buttons()
 
 
 func _choose_directive(directive_id: String) -> void:
@@ -491,7 +506,155 @@ func _reset_game() -> void:
 
 
 func _on_viewport_resized() -> void:
+	_apply_responsive_layout()
 	queue_redraw()
+
+
+func _apply_responsive_layout(requested_size: Vector2 = Vector2.ZERO) -> void:
+	var viewport_size := requested_size if requested_size != Vector2.ZERO else get_viewport_rect().size
+	var was_compact := is_compact_layout
+	is_compact_layout = OS.has_feature("mobile") or viewport_size.x < 900.0 or viewport_size.y > viewport_size.x
+	if was_compact and not is_compact_layout and mobile_interact_held:
+		Input.action_release("interact")
+		mobile_interact_held = false
+	var safe_rect := _get_safe_layout_rect(viewport_size)
+	if is_compact_layout:
+		_apply_compact_layout(safe_rect)
+	else:
+		_apply_desktop_layout(safe_rect)
+	_layout_overlay(safe_rect)
+	_layout_directive_buttons()
+
+
+func _get_safe_layout_rect(viewport_size: Vector2) -> Rect2:
+	var result := Rect2(Vector2.ZERO, viewport_size)
+	if not OS.has_feature("mobile"):
+		return result
+	var safe_pixels := DisplayServer.get_display_safe_area()
+	var window_pixels := Vector2(get_window().size)
+	if safe_pixels.size.x <= 0 or safe_pixels.size.y <= 0 or window_pixels.x <= 0 or window_pixels.y <= 0:
+		return result
+	var scale := viewport_size / window_pixels
+	return Rect2(Vector2(safe_pixels.position) * scale, Vector2(safe_pixels.size) * scale)
+
+
+func _apply_desktop_layout(safe_rect: Rect2) -> void:
+	var width := safe_rect.size.x
+	var bottom := safe_rect.end.y
+	top_bar.position = safe_rect.position + Vector2(20, 18)
+	top_bar.size = Vector2(maxf(720.0, width - 40.0), 70)
+	title_label.text = "DEEPWATCH  //  SECTOR K-12"
+	title_label.position = Vector2(22, 12)
+	title_label.size = Vector2(560, 26)
+	title_label.add_theme_font_size_override("font_size", 20)
+	resources_label.position = Vector2(22, 39)
+	resources_label.size = Vector2(maxf(480.0, width - 560.0), 24)
+	resources_label.add_theme_font_size_override("font_size", 14)
+	wave_button.size = Vector2(225, 46)
+	wave_button.position = Vector2(top_bar.size.x - 250, 12)
+	wave_label.position = Vector2(maxf(430.0, top_bar.size.x - 585.0), 14)
+	wave_label.size = Vector2(320, 42)
+	wave_label.add_theme_font_size_override("font_size", 16)
+	objective_label.visible = true
+	objective_label.position = safe_rect.position + Vector2(22, 104)
+	objective_label.size = Vector2(370, 116)
+	message_label.position = Vector2(safe_rect.position.x + (width - 400.0) * 0.5, safe_rect.position.y + 104)
+	message_label.size = Vector2(400, 40)
+	intel_label.position = Vector2(safe_rect.position.x + 22, bottom - 90)
+	intel_label.size = Vector2(360, 62)
+	prompt_label.position = Vector2(safe_rect.position.x + (width - 350.0) * 0.5, bottom - 90)
+	prompt_label.size = Vector2(350, 62)
+	barricade_button.position = Vector2(safe_rect.end.x - 190, bottom - 78)
+	barricade_button.size = Vector2(165, 48)
+	repair_button.position = barricade_button.position - Vector2(180, 0)
+	repair_button.size = Vector2(170, 48)
+	shock_button.position = repair_button.position - Vector2(155, 0)
+	shock_button.size = Vector2(145, 48)
+	shock_button.visible = true
+	repair_button.visible = true
+	barricade_button.visible = true
+	for button in mobile_context_buttons:
+		button.visible = false
+
+
+func _apply_compact_layout(safe_rect: Rect2) -> void:
+	var margin := 8.0
+	var width := safe_rect.size.x
+	var bottom := safe_rect.end.y
+	var portrait := safe_rect.size.y > width
+	var header_height := 104.0 if portrait else 78.0
+	top_bar.position = safe_rect.position + Vector2(margin, margin)
+	top_bar.size = Vector2(width - margin * 2.0, header_height)
+	title_label.text = "DEEPWATCH"
+	title_label.position = Vector2(12, 7)
+	title_label.size = Vector2(top_bar.size.x * 0.43, 24)
+	title_label.add_theme_font_size_override("font_size", 16)
+	resources_label.position = Vector2(12, 31)
+	resources_label.size = Vector2(top_bar.size.x * (0.58 if portrait else 0.48), header_height - 34)
+	resources_label.add_theme_font_size_override("font_size", 12)
+	wave_button.size = Vector2(minf(180.0, top_bar.size.x * 0.42), 42)
+	wave_button.position = Vector2(top_bar.size.x - wave_button.size.x - 10, header_height - 49)
+	wave_button.add_theme_font_size_override("font_size", 12)
+	wave_label.position = Vector2(top_bar.size.x * 0.48, 7)
+	wave_label.size = Vector2(top_bar.size.x * 0.49 - 10, 30)
+	wave_label.add_theme_font_size_override("font_size", 12)
+	objective_label.visible = false
+	message_label.position = Vector2(safe_rect.position.x + 12, top_bar.position.y + header_height + 5)
+	message_label.size = Vector2(width - 24, 34)
+	message_label.add_theme_font_size_override("font_size", 15)
+	var action_height := 54.0
+	var action_y := bottom - action_height - margin
+	var gap := 6.0
+	var button_width := (width - margin * 2.0 - gap * 3.0) / 4.0
+	for index in range(mobile_context_buttons.size()):
+		var button := mobile_context_buttons[index]
+		button.position = Vector2(safe_rect.position.x + margin + index * (button_width + gap), action_y)
+		button.size = Vector2(button_width, action_height)
+		button.visible = true
+	shock_button.visible = false
+	repair_button.visible = false
+	barricade_button.visible = false
+	intel_label.position = Vector2(safe_rect.position.x + margin, action_y - 48)
+	intel_label.size = Vector2(width - margin * 2.0, 42)
+	intel_label.add_theme_font_size_override("font_size", 11)
+	prompt_label.position = Vector2(safe_rect.position.x + margin, action_y - 100)
+	prompt_label.size = Vector2(width - margin * 2.0, 46)
+	prompt_label.add_theme_font_size_override("font_size", 13)
+
+
+func _layout_overlay(safe_rect: Rect2) -> void:
+	if overlay_card == null:
+		return
+	var card_width := minf(580.0, safe_rect.size.x - 32.0)
+	var card_height := minf(500.0 if is_compact_layout else 400.0, safe_rect.size.y - 32.0)
+	overlay_card.size = Vector2(card_width, card_height)
+	overlay_card.position = safe_rect.position + (safe_rect.size - overlay_card.size) * 0.5
+	overlay_title.position = Vector2(24, 24)
+	overlay_title.size = Vector2(card_width - 48, 58)
+	overlay_title.add_theme_font_size_override("font_size", 26 if is_compact_layout else 32)
+	overlay_body.position = Vector2(36, 88)
+	overlay_body.size = Vector2(card_width - 72, card_height - 190)
+	overlay_body.add_theme_font_size_override("font_size", 15 if is_compact_layout else 17)
+	overlay_button.size = Vector2(minf(250.0, card_width - 48.0), 54)
+	overlay_button.position = Vector2((card_width - overlay_button.size.x) * 0.5, card_height - 78)
+
+
+func _layout_directive_buttons() -> void:
+	if overlay_card == null or directive_buttons.is_empty():
+		return
+	var card_width := overlay_card.size.x
+	if card_width >= 540.0:
+		var gap := 10.0
+		var button_width := (card_width - 44.0 - gap * 2.0) / 3.0
+		for index in range(directive_buttons.size()):
+			directive_buttons[index].position = Vector2(22 + index * (button_width + gap), overlay_card.size.y - 118)
+			directive_buttons[index].size = Vector2(button_width, 88)
+	else:
+		var button_height := 68.0
+		var start_y := maxf(172.0, overlay_card.size.y - 30.0 - directive_buttons.size() * (button_height + 6.0))
+		for index in range(directive_buttons.size()):
+			directive_buttons[index].position = Vector2(20, start_y + index * (button_height + 6.0))
+			directive_buttons[index].size = Vector2(card_width - 40, button_height)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -751,6 +914,66 @@ func _select_tower_option(option_index: int) -> void:
 			_flash_message("Specialization installed: %s" % defense_loadout.get_pad_display_data(nearby_pad).specialization_name)
 		else:
 			_flash_message(result.reason)
+
+
+func _mobile_context_button_down(index: int) -> void:
+	if index < 0 or index >= mobile_context_buttons.size():
+		return
+	var action := str(mobile_context_buttons[index].get_meta("action", ""))
+	match action:
+		"work":
+			mobile_interact_held = true
+			Input.action_press("interact")
+		"shock":
+			_activate_shock_pulse()
+		"repair":
+			_activate_emergency_repair()
+		"barrier":
+			_deploy_barricade()
+		_:
+			if action.begins_with("tower_"):
+				_select_tower_option(int(action.trim_prefix("tower_")))
+			elif action.begins_with("specialize_"):
+				_select_tower_option(int(action.trim_prefix("specialize_")))
+
+
+func _mobile_context_button_up(_index: int) -> void:
+	if mobile_interact_held:
+		Input.action_release("interact")
+		mobile_interact_held = false
+
+
+func _set_mobile_button(index: int, text: String, action: String, disabled: bool = false) -> void:
+	var button := mobile_context_buttons[index]
+	button.text = text
+	button.set_meta("action", action)
+	button.disabled = disabled
+
+
+func _update_mobile_context(nearby_pad, can_work: bool, ability_state: Dictionary) -> void:
+	if not is_compact_layout:
+		return
+	if mobile_interact_held and not can_work:
+		Input.action_release("interact")
+		mobile_interact_held = false
+	if nearby_pad != null and int(nearby_pad.level) == 0:
+		for index in range(4):
+			var family: String = defense_loadout.FAMILIES[index]
+			var family_data: Dictionary = defense_loadout.get_family_display_data(family)
+			_set_mobile_button(index, str(family_data.short_name), "tower_%d" % index)
+		return
+	if nearby_pad != null and int(nearby_pad.level) >= 2 and str(nearby_pad.specialization).is_empty():
+		var branches: Array = defense_loadout.get_specialization_ids(nearby_pad.tower_family)
+		for index in range(2):
+			var branch: Dictionary = defense_loadout.FAMILY_DATA[nearby_pad.tower_family].specializations[branches[index]]
+			_set_mobile_button(index, str(branch.display_name), "specialize_%d" % index)
+		_set_mobile_button(2, "SHOCK", "shock", not bool(ability_state.shock_pulse.ready))
+		_set_mobile_button(3, "BARRIER", "barrier", engineer_toolkit.barricade_charges <= 0 or engineer_toolkit.downed)
+		return
+	_set_mobile_button(0, "HOLD\nWORK" if can_work else "WORK", "work", not can_work)
+	_set_mobile_button(1, "SHOCK", "shock", not bool(ability_state.shock_pulse.ready))
+	_set_mobile_button(2, "VAULT\nREPAIR", "repair", not bool(ability_state.emergency_repair.cooldown_ready))
+	_set_mobile_button(3, "BARRIER", "barrier", engineer_toolkit.barricade_charges <= 0 or engineer_toolkit.downed)
 
 
 func _update_construction(delta: float) -> void:
@@ -1107,9 +1330,12 @@ func _update_hud() -> void:
 	for enemy in enemies:
 		if exploration.is_visible(Vector2i(roundi(enemy.pos.x), roundi(enemy.pos.y))):
 			visible_contacts += 1
-	resources_label.text = "CREDITS %03d    VAULT %02d/20    ENGINEER %03d/100    CONTACTS %02d" % [floori(credits), base_health, floori(engineer_toolkit.health), visible_contacts]
+	if is_compact_layout:
+		resources_label.text = "CR %03d  VAULT %02d/20\nENG %03d  HOSTILES %02d" % [floori(credits), base_health, floori(engineer_toolkit.health), visible_contacts]
+	else:
+		resources_label.text = "CREDITS %03d    VAULT %02d/20    ENGINEER %03d/100    CONTACTS %02d" % [floori(credits), base_health, floori(engineer_toolkit.health), visible_contacts]
 	var director_hud: Dictionary = lockdown_director.get_hud_state()
-	wave_label.text = "LOCKDOWN  %d / 3   •   %s" % [director_hud.secured_sectors, director_hud.state_label]
+	wave_label.text = "%d/3  •  %s" % [director_hud.secured_sectors, director_hud.state_label] if is_compact_layout else "LOCKDOWN  %d / 3   •   %s" % [director_hud.secured_sectors, director_hud.state_label]
 	if director_hud.telegraph_active:
 		wave_label.text += "  %.1fs" % director_hud.telegraph_remaining
 	wave_button.text = "AUTHORIZE FINAL BREACH"
@@ -1120,7 +1346,7 @@ func _update_hud() -> void:
 	var power_hud: Dictionary = power_network.get_hud_state()
 	var total_power_demand: float = power_hud.power_used + _get_tower_power_used()
 	var power_status := "GRID OFFLINE" if not power_network.is_online("grid_relay") else "OVERLOAD" if total_power_demand > power_hud.capacity else "STABLE"
-	intel_label.text = "POWER  %.0f / %.0f  %s\nMAPPED %d%%  •  CONTACTS %d  •  SENSORS %d" % [total_power_demand, power_hud.capacity, power_status, explored_percent, visible_contacts, power_hud.sensor_count]
+	intel_label.text = "PWR %.0f/%.0f %s  •  MAP %d%%  •  SENSOR %d" % [total_power_demand, power_hud.capacity, power_status, explored_percent, power_hud.sensor_count] if is_compact_layout else "POWER  %.0f / %.0f  %s\nMAPPED %d%%  •  CONTACTS %d  •  SENSORS %d" % [total_power_demand, power_hud.capacity, power_status, explored_percent, visible_contacts, power_hud.sensor_count]
 	var objective_lines: Array[String] = []
 	for objective in director_hud.objectives:
 		var marker := "[X]" if objective.status == "secured" else "[>]" if objective.status in ["repairing", "online"] else "[ ]"
@@ -1158,21 +1384,21 @@ func _update_hud() -> void:
 		var active_progress := 0.0
 		if lockdown_director.active_objective_index >= 0:
 			active_progress = lockdown_director.objectives[lockdown_director.active_objective_index].repair_progress
-		prompt_label.text = "HOLD E  •  RESTORE %s  %.0f%%" % [str(objective_facility.type).replace("_", " ").to_upper(), active_progress]
+		prompt_label.text = "%s  •  RESTORE %s  %.0f%%" % ["HOLD WORK" if is_compact_layout else "HOLD E", str(objective_facility.type).replace("_", " ").to_upper(), active_progress]
 		prompt_label.visible = true
 	elif maintenance_facility != null:
-		prompt_label.text = "HOLD E  •  REPAIR %s  %.0f%%" % [str(maintenance_facility.type).replace("_", " ").to_upper(), 100.0 * maintenance_facility.hp / maintenance_facility.max_hp]
+		prompt_label.text = "%s  •  REPAIR %s  %.0f%%" % ["HOLD WORK" if is_compact_layout else "HOLD E", str(maintenance_facility.type).replace("_", " ").to_upper(), 100.0 * maintenance_facility.hp / maintenance_facility.max_hp]
 		prompt_label.visible = true
 	elif nearby != null and nearby.level >= 2 and str(nearby.specialization).is_empty():
 		var branch_ids: Array = defense_loadout.get_specialization_ids(nearby.tower_family)
 		var first_branch: Dictionary = defense_loadout.FAMILY_DATA[nearby.tower_family].specializations[branch_ids[0]]
 		var second_branch: Dictionary = defense_loadout.FAMILY_DATA[nearby.tower_family].specializations[branch_ids[1]]
-		prompt_label.text = "SPECIALIZE  1 %s  •  2 %s" % [first_branch.display_name, second_branch.display_name]
+		prompt_label.text = "CHOOSE SPECIALIZATION BELOW" if is_compact_layout else "SPECIALIZE  1 %s  •  2 %s" % [first_branch.display_name, second_branch.display_name]
 		prompt_label.visible = true
 	elif nearby != null and nearby.level < 3:
 		var cost := _upgrade_cost(nearby.level, nearby)
 		var display: Dictionary = defense_loadout.get_pad_display_data(nearby)
-		var target_name := "1 GUN  2 ARC  3 CRYO  4 SUPPORT" if nearby.level == 0 else "UPGRADE %s TO MK-%d" % [display.short_name, nearby.level + 1]
+		var target_name := ("CHOOSE TOWER BLUEPRINT BELOW" if is_compact_layout else "1 GUN  2 ARC  3 CRYO  4 SUPPORT") if nearby.level == 0 else "UPGRADE %s TO MK-%d" % [display.short_name, nearby.level + 1]
 		prompt_label.text = "%s\n%d / %d CREDITS" % [target_name, floori(nearby.progress), floori(cost)]
 		prompt_label.visible = true
 	elif nearby != null:
@@ -1180,6 +1406,7 @@ func _update_hud() -> void:
 		prompt_label.visible = true
 	else:
 		prompt_label.visible = false
+	_update_mobile_context(nearby, objective_facility != null or maintenance_facility != null, ability_state)
 
 
 func grid_to_screen(grid_pos: Vector2) -> Vector2:

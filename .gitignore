@@ -1,2 +1,7 @@
 .godot/
 *.md
+builds/
+*.keystore
+*.jks
+*.p12
+*.mobileprovision

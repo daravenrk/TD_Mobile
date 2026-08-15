@@ -1,0 +1,70 @@
+DEEPWATCH DISTRIBUTION PLAN
+===========================
+
+Release order
+-------------
+1. Web demo on itch.io: fastest way to validate onboarding, controls, balance,
+   and performance with players. Use a single-threaded Web export named
+   index.html and test Chrome, Firefox, and Safari.
+2. Windows, macOS, and Linux: package the full paid/demo build for itch.io or
+   Steam after the web feedback pass.
+3. Android closed test, then Google Play: validate the compact HUD on small,
+   wide, tablet, and notched displays before production release.
+4. iOS TestFlight, then App Store: begin after Android touch UX is stable so
+   both stores share the same tested mobile interface.
+
+Shared release preparation
+--------------------------
+- Install the Godot 4.7.1 export templates from Editor > Manage Export
+  Templates. Export templates are not currently installed on this machine.
+- Create final app icon, splash art, screenshots, store descriptions, privacy
+  disclosures, version numbers, and a unique application/bundle identifier.
+- Keep outputs under builds/; this folder and signing credentials are ignored
+  by Git. Never commit keystores, certificates, provisioning profiles, or
+  their passwords.
+- Run tools/test_all.sh before every candidate build.
+- Test 1280x720 and larger desktop windows, 854x480 landscape phones,
+  1280x800 tablets, and at least one portrait layout as a fallback.
+- Profile a late incursion with eight MK-3 towers on the lowest target device.
+
+Godot export presets to create
+------------------------------
+- Web: Compatibility renderer, single-threaded/default export, output
+  builds/web/index.html. Host over HTTPS. Prefer this for the public demo.
+- Windows Desktop: x86_64 release build, output
+  builds/windows/Deepwatch.exe. Code-sign the final installer/executable.
+- macOS: universal or arm64+x86_64 app, output builds/macos/Deepwatch.zip.
+  Sign with Developer ID and notarize builds distributed outside the store.
+- Linux/X11: x86_64 release build, output
+  builds/linux/Deepwatch.x86_64. Package as zip first; add AppImage later.
+- Android: install OpenJDK 17 and Android SDK, configure both paths in Godot,
+  use a Gradle build, and export a signed AAB for Google Play. Keep the release
+  keystore outside this repository and back it up securely.
+- iOS: export on macOS with Xcode installed. Configure Apple Team ID and a
+  unique bundle ID, export the Xcode project, sign in Xcode, and distribute
+  the beta through TestFlight.
+
+Command-line release pattern
+----------------------------
+After presets exist, reproducible releases can use:
+
+  godot --headless --path . --export-release "Web" builds/web/index.html
+  godot --headless --path . --export-release "Windows Desktop" builds/windows/Deepwatch.exe
+  godot --headless --path . --export-release "macOS" builds/macos/Deepwatch.zip
+  godot --headless --path . --export-release "Linux" builds/linux/Deepwatch.x86_64
+
+Android and iOS signing should initially remain an explicit release-manager
+step. Move secrets into CI only after store identifiers and accounts are final.
+
+Release gates
+-------------
+- No controls or text outside the safe area.
+- Mobile repair works while held and always releases when the finger lifts.
+- All tower families and specialization choices are accessible without a
+  keyboard.
+- Save data survives a native restart; Web clearly warns if browser storage is
+  unavailable.
+- 30 FPS minimum on the lowest supported phone during the final breach;
+  desktop target is 60 FPS.
+- Pause correctly when mobile is backgrounded or a Web tab loses focus.
+- Keyboard, mouse, touch, and controller smoke passes are recorded per build.
