@@ -33,6 +33,7 @@ var player_pos := Vector2(24.0, 14.0)
 var player_facing := Vector2(0.0, 1.0)
 var tap_target := Vector2.ZERO
 var has_tap_target := false
+var tap_route: Array = []
 var camera_pos := player_pos
 var map_seed := 0
 var map_rng := RandomNumberGenerator.new()
@@ -144,6 +145,7 @@ func _generate_map(forced_seed: int = -1) -> void:
 			break
 	camera_pos = player_pos
 	has_tap_target = false
+	tap_route.clear()
 	lockdown_director = LockdownDirectorScript.new(map_seed)
 	engineer_toolkit.reset()
 	exploration.reset(GRID_SIZE, 4)
@@ -152,7 +154,7 @@ func _generate_map(forced_seed: int = -1) -> void:
 
 func _configure_infrastructure() -> void:
 	var facility_cells: Array = map_data.facility_cells
-	var definitions: Array = [{"id": "vault_generator", "type": "generator", "position": BASE_CELL, "capacity": 24.0}]
+	var definitions: Array = [{"id": "vault_generator", "type": "generator", "position": BASE_CELL, "capacity": 20.0}]
 	var types := ["substation", "sensor", "armory", "blast_control"]
 	var ids := ["grid_relay", "sensor_lock", "armory_lock", "blast_lock"]
 	for index in range(types.size()):
@@ -165,7 +167,7 @@ func _configure_infrastructure() -> void:
 		{"a": "grid_relay", "b": "armory_lock"},
 		{"a": "grid_relay", "b": "blast_lock"}
 	]
-	power_network.reset(definitions, links, 24.0)
+	power_network.reset(definitions, links, 20.0)
 
 
 func _select_balanced_pad_cells(candidates: Array, desired_count: int) -> Array:
@@ -510,15 +512,26 @@ func _unhandled_input(event: InputEvent) -> void:
 			_select_tower_option(option_index)
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		if event.position.y > 100.0 and event.position.y < get_viewport_rect().size.y - 70.0:
-			tap_target = screen_to_grid(event.position)
-			tap_target.x = clampf(tap_target.x, 0.0, GRID_SIZE.x - 1.0)
-			tap_target.y = clampf(tap_target.y, 0.0, GRID_SIZE.y - 1.0)
-			has_tap_target = true
+			_set_tap_destination(screen_to_grid(event.position))
 	if event is InputEventScreenTouch and event.pressed:
-		tap_target = screen_to_grid(event.position)
-		tap_target.x = clampf(tap_target.x, 0.0, GRID_SIZE.x - 1.0)
-		tap_target.y = clampf(tap_target.y, 0.0, GRID_SIZE.y - 1.0)
-		has_tap_target = true
+		_set_tap_destination(screen_to_grid(event.position))
+
+
+func _set_tap_destination(destination: Vector2) -> void:
+	var destination_cell := Vector2i(roundi(destination.x), roundi(destination.y))
+	destination_cell.x = clampi(destination_cell.x, 0, GRID_SIZE.x - 1)
+	destination_cell.y = clampi(destination_cell.y, 0, GRID_SIZE.y - 1)
+	if not walkable_cells.has(destination_cell):
+		_flash_message("Destination is behind a sealed wall")
+		return
+	tap_route = _find_walkable_route(Vector2i(roundi(player_pos.x), roundi(player_pos.y)), destination_cell)
+	if tap_route.size() <= 1:
+		has_tap_target = false
+		tap_route.clear()
+		return
+	tap_route.remove_at(0)
+	tap_target = Vector2(tap_route[0])
+	has_tap_target = true
 
 
 func _physics_process(delta: float) -> void:
@@ -539,6 +552,7 @@ func _physics_process(delta: float) -> void:
 			_flash_message("Engineer recovered at the command vault")
 	_update_lockdown(delta)
 	power_network.update(delta)
+	_update_power_capacity()
 	_update_sensor_range()
 	_update_construction(delta)
 	_update_wave(delta)
@@ -556,9 +570,8 @@ func _update_lockdown(delta: float) -> void:
 	elif director_event.event == "final_breach_started":
 		_start_directed_incursion(true)
 
-	if lockdown_director.state != lockdown_director.STATE_RECON:
-		return
-	if lockdown_director.can_trigger_final_breach():
+	_repair_nearby_facility(delta)
+	if lockdown_director.state != lockdown_director.STATE_RECON or lockdown_director.can_trigger_final_breach():
 		return
 	var objective_index: int = lockdown_director.incursions_completed
 	if objective_index < 0 or objective_index >= facility_ids_by_objective.size():
@@ -571,14 +584,35 @@ func _update_lockdown(delta: float) -> void:
 		return
 	if lockdown_director.active_objective_index < 0:
 		lockdown_director.activate_next_objective()
-	var repair_rate := 34.0 * delta
-	var repair_result: Dictionary = lockdown_director.add_objective_repair(repair_rate)
-	power_network.repair_facility(facility_id, repair_rate)
+	var objective_rate := 34.0 * delta
+	var repair_result: Dictionary = lockdown_director.add_objective_repair(objective_rate)
 	if repair_result.get("completed", false):
 		power_network.repair_facility(facility_id, 1000.0)
 		lockdown_director.begin_incursion()
 		_spawn_burst(Vector2(facility.position), CYAN, 18)
 		_flash_message("%s restored  •  breach inbound" % facility_id.replace("_", " ").capitalize())
+
+
+func _repair_nearby_facility(delta: float) -> void:
+	if not Input.is_action_pressed("interact"):
+		return
+	for facility_id in power_network.facilities:
+		var facility: Dictionary = power_network.facilities[facility_id]
+		if player_pos.distance_to(Vector2(facility.position)) > 0.72:
+			continue
+		if facility.hp < facility.max_hp:
+			var repair_rate := 34.0 * delta
+			var hp_before := float(facility.hp)
+			power_network.repair_facility(facility_id, repair_rate)
+			if hp_before + repair_rate >= float(facility.max_hp):
+				_flash_message("%s restored to service" % str(facility.type).replace("_", " ").capitalize())
+		return
+
+
+func _update_power_capacity() -> void:
+	# Restoring the grid relay connects the generator's reserve bus. Losing the
+	# relay drops capacity again, but the engineer can now repair it in combat.
+	power_network.capacity = 60.0 if power_network.is_online("grid_relay") else 20.0
 
 
 func _update_sensor_range() -> void:
@@ -600,21 +634,38 @@ func _update_player(delta: float) -> void:
 		# Screen-aligned controls converted into grid axes for an isometric floor.
 		move = Vector2(input.x + input.y, input.y - input.x).normalized()
 		has_tap_target = false
+		tap_route.clear()
 	elif has_tap_target:
 		var offset := tap_target - player_pos
 		if offset.length() < 0.08:
-			has_tap_target = false
+			player_pos = tap_target
+			if not tap_route.is_empty():
+				tap_route.remove_at(0)
+			if tap_route.is_empty():
+				has_tap_target = false
+			else:
+				tap_target = Vector2(tap_route[0])
 		else:
 			move = offset.normalized()
 
 	if move != Vector2.ZERO:
 		player_facing = move
 		var speed_multiplier := lockdown_director.get_modifier("dark_engineer_speed") if power_network.get_sensor_coverage().is_empty() else 1.0
-		var next := player_pos + move * PLAYER_SPEED * speed_multiplier * delta
-		next.x = clampf(next.x, 0.15, GRID_SIZE.x - 1.15)
-		next.y = clampf(next.y, 0.15, GRID_SIZE.y - 1.15)
-		if not blocked_cells.has(Vector2i(roundi(next.x), roundi(next.y))):
+		var step := move * PLAYER_SPEED * speed_multiplier * delta
+		var next := player_pos + step
+		if walkable_cells.has(Vector2i(roundi(next.x), roundi(next.y))):
 			player_pos = next
+		else:
+			# Screen-aligned isometric input is diagonal in grid space. Sliding
+			# along either valid axis keeps one-tile maintenance corridors usable.
+			var slide_x := player_pos + Vector2(step.x, 0.0)
+			var slide_y := player_pos + Vector2(0.0, step.y)
+			if absf(step.x) >= absf(step.y) and walkable_cells.has(Vector2i(roundi(slide_x.x), roundi(slide_x.y))):
+				player_pos = slide_x
+			elif walkable_cells.has(Vector2i(roundi(slide_y.x), roundi(slide_y.y))):
+				player_pos = slide_y
+			elif walkable_cells.has(Vector2i(roundi(slide_x.x), roundi(slide_x.y))):
+				player_pos = slide_x
 
 
 func _activate_shock_pulse() -> void:
@@ -1067,7 +1118,9 @@ func _update_hud() -> void:
 	message_label.text = status_message if status_timer > 0.0 else ""
 	var explored_percent := floori(100.0 * exploration.get_explored_count() / float(GRID_SIZE.x * GRID_SIZE.y))
 	var power_hud: Dictionary = power_network.get_hud_state()
-	intel_label.text = "POWER  %.0f / %.0f   •   CONTACTS  %d\nMAPPED  %d%%   •   SENSORS  %d" % [power_hud.power_used + _get_tower_power_used(), power_hud.capacity, visible_contacts, explored_percent, power_hud.sensor_count]
+	var total_power_demand: float = power_hud.power_used + _get_tower_power_used()
+	var power_status := "GRID OFFLINE" if not power_network.is_online("grid_relay") else "OVERLOAD" if total_power_demand > power_hud.capacity else "STABLE"
+	intel_label.text = "POWER  %.0f / %.0f  %s\nMAPPED %d%%  •  CONTACTS %d  •  SENSORS %d" % [total_power_demand, power_hud.capacity, power_status, explored_percent, visible_contacts, power_hud.sensor_count]
 	var objective_lines: Array[String] = []
 	for objective in director_hud.objectives:
 		var marker := "[X]" if objective.status == "secured" else "[>]" if objective.status in ["repairing", "online"] else "[ ]"
@@ -1083,6 +1136,12 @@ func _update_hud() -> void:
 	barricade_button.text = "B  BARRIER  %d/%d" % [engineer_toolkit.barricade_charges, engineer_toolkit.config.max_barricade_charges]
 	barricade_button.disabled = engineer_toolkit.barricade_charges <= 0 or engineer_toolkit.downed
 
+	var maintenance_facility = null
+	for facility_id in power_network.facilities:
+		var nearby_facility: Dictionary = power_network.facilities[facility_id]
+		if nearby_facility.hp < nearby_facility.max_hp and player_pos.distance_to(Vector2(nearby_facility.position)) < 0.8:
+			maintenance_facility = nearby_facility
+			break
 	var objective_facility = null
 	if lockdown_director.state == lockdown_director.STATE_RECON and not lockdown_director.can_trigger_final_breach():
 		var objective_index: int = lockdown_director.incursions_completed
@@ -1100,6 +1159,9 @@ func _update_hud() -> void:
 		if lockdown_director.active_objective_index >= 0:
 			active_progress = lockdown_director.objectives[lockdown_director.active_objective_index].repair_progress
 		prompt_label.text = "HOLD E  •  RESTORE %s  %.0f%%" % [str(objective_facility.type).replace("_", " ").to_upper(), active_progress]
+		prompt_label.visible = true
+	elif maintenance_facility != null:
+		prompt_label.text = "HOLD E  •  REPAIR %s  %.0f%%" % [str(maintenance_facility.type).replace("_", " ").to_upper(), 100.0 * maintenance_facility.hp / maintenance_facility.max_hp]
 		prompt_label.visible = true
 	elif nearby != null and nearby.level >= 2 and str(nearby.specialization).is_empty():
 		var branch_ids: Array = defense_loadout.get_specialization_ids(nearby.tower_family)

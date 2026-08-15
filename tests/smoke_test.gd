@@ -79,10 +79,35 @@ func _run() -> void:
 	game.credits = 5000.0
 	for index in range(game.pads.size()):
 		var pad: Dictionary = game.pads[index]
+		pad.level = 0
 		game.defense_loadout.assign_family(pad, game.defense_loadout.FAMILIES[index % 3])
 		pad.level = 3
 		var branches: Array = game.defense_loadout.get_specialization_ids(pad.tower_family)
 		pad.specialization = branches[0]
+
+	# A fully restored reserve bus must sustain a normal late-game load. If a
+	# sapper destroys the relay, maintenance during combat must bring every pad
+	# back online instead of leaving the later-index weapons permanently silent.
+	for facility_id in game.power_network.facilities:
+		game.power_network.repair_facility(facility_id, 1000.0)
+	game._update_power_capacity()
+	game.power_network.update(0.0)
+	var late_game_pad: Dictionary = game.pads[game.pads.size() - 1]
+	_check(game.power_network.capacity == 60.0, "Restored grid relay did not connect reserve capacity")
+	_check(game._is_pad_powered(late_game_pad), "Late-game tower was shed under the normal upgraded load")
+	game.power_network.damage_facility("grid_relay", 1000.0)
+	game._update_power_capacity()
+	game.power_network.update(0.0)
+	_check(not game._is_pad_powered(late_game_pad), "Tower remained powered after its grid relay was destroyed")
+	game.player_pos = Vector2(game.power_network.facilities["grid_relay"].position)
+	Input.action_press("interact")
+	game._repair_nearby_facility(4.0)
+	Input.action_release("interact")
+	game._update_power_capacity()
+	game.power_network.update(0.0)
+	_check(game.power_network.is_online("grid_relay"), "Engineer could not repair the grid relay during an incursion")
+	_check(game._is_pad_powered(late_game_pad), "Late-game tower did not recover after grid relay repair")
+
 	game.power_network.capacity = 100.0
 	game.engineer_toolkit.barricades.clear()
 	game.wave = 0
